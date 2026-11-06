@@ -2,6 +2,7 @@ package com.recco.launcher;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -24,6 +25,8 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.TypefaceSpan;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -45,8 +48,6 @@ public class MainActivity extends Activity {
 
     private static final int WHITE = 0xFFFFFFFF;
     private static final int WHITE_DIM = 0xA6FFFFFF;
-    private static final int TILE_W = 184;
-    private static final int TILE_H = 110;
 
     private static class App {
         String label;
@@ -57,19 +58,44 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout appsRow;
+    private LinearLayout recoRow;
+    private TextView heroTitle;
+    private TextView heroSub;
+    private App currentApp;
+
     private float density;
+    private int widthPx;
+    private int heightPx;
+    private int tileW;
+    private int tileH;
+    private int recoW;
+    private int recoH;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        density = getResources().getDisplayMetrics().density;
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        density = dm.density;
+        widthPx = dm.widthPixels;
+        heightPx = dm.heightPixels;
+        tileW = (int) (widthPx * 0.23f);
+        tileH = (int) (tileW * 0.6f);
+        recoW = (int) (widthPx * 0.16f);
+        recoH = (int) (recoW * 9f / 16f);
         buildUi();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        RecoService.setListener(() -> runOnUiThread(this::refreshHero));
         loadApps();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        RecoService.setListener(null);
     }
 
     @Override
@@ -98,6 +124,9 @@ public class MainActivity extends Activity {
         root.addView(buildTopBar(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        root.addView(buildHero(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         FrameLayout center = new FrameLayout(this);
         center.setClipChildren(false);
 
@@ -109,7 +138,7 @@ public class MainActivity extends Activity {
         appsRow = new LinearLayout(this);
         appsRow.setOrientation(LinearLayout.HORIZONTAL);
         appsRow.setClipChildren(false);
-        appsRow.setPadding(dp(56), dp(40), dp(56), dp(48));
+        appsRow.setPadding(dp(56), dp(24), dp(56), dp(40));
         scroller.addView(appsRow, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -124,21 +153,25 @@ public class MainActivity extends Activity {
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(56), dp(28), dp(56), dp(0));
+        top.setPadding(dp(56), dp(24), dp(56), dp(0));
 
-        String name = getString(R.string.app_name);
+        // Nombre: mayúsculas, trazo fino y mucho espaciado entre letras
+        String name = getString(R.string.app_name).toUpperCase();
         int space = name.indexOf(' ');
         SpannableStringBuilder sb = new SpannableStringBuilder(name);
         if (space > 0) {
+            sb.setSpan(new TypefaceSpan("sans-serif-medium"), 0, space,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            sb.setSpan(new TypefaceSpan("sans-serif-thin"), space, name.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             sb.setSpan(new ForegroundColorSpan(WHITE_DIM), space, name.length(),
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
         TextView title = new TextView(this);
         title.setText(sb);
         title.setTextColor(WHITE);
-        title.setTextSize(22);
-        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        title.setLetterSpacing(0.02f);
+        title.setTextSize(20);
+        title.setLetterSpacing(0.32f);
         top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         addIcon(top, R.drawable.ic_settings, v -> openSettings(Settings.ACTION_SETTINGS));
@@ -181,6 +214,181 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(52), dp(52));
         lp.leftMargin = dp(6);
         parent.addView(v, lp);
+    }
+
+    // -------------------------------------------- Zona de recomendaciones
+
+    private View buildHero() {
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setClipChildren(false);
+        hero.setPadding(dp(56), dp(18), dp(56), dp(0));
+
+        heroTitle = new TextView(this);
+        heroTitle.setTextColor(WHITE);
+        heroTitle.setTextSize(34);
+        heroTitle.setSingleLine(true);
+        heroTitle.setEllipsize(TextUtils.TruncateAt.END);
+        heroTitle.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        hero.addView(heroTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        heroSub = new TextView(this);
+        heroSub.setTextColor(WHITE_DIM);
+        heroSub.setTextSize(15);
+        heroSub.setSingleLine(true);
+        heroSub.setEllipsize(TextUtils.TruncateAt.END);
+        hero.addView(heroSub, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setClipChildren(false);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, dp(14), 0, dp(14));
+
+        recoRow = new LinearLayout(this);
+        recoRow.setOrientation(LinearLayout.HORIZONTAL);
+        recoRow.setClipChildren(false);
+        scroll.addView(recoRow, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        hero.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, recoH + dp(28)));
+        return hero;
+    }
+
+    private boolean listenerEnabled() {
+        String flat = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+        return flat != null && flat.contains(getPackageName());
+    }
+
+    private void refreshHero() {
+        if (currentApp != null && !recoRow.hasFocus()) showHero(currentApp);
+    }
+
+    private void showHero(App a) {
+        currentApp = a;
+        heroTitle.setText(a.label);
+        recoRow.removeAllViews();
+
+        List<RecoService.Reco> list = RecoService.forPackage(a.component.getPackageName());
+        if (list.isEmpty()) {
+            if (!listenerEnabled()) {
+                heroSub.setText("Activa el acceso a notificaciones para ver recomendaciones aquí");
+                recoRow.addView(buildEnableButton());
+            } else {
+                heroSub.setText("Sin recomendaciones por ahora");
+            }
+        } else {
+            heroSub.setText("Recomendado en " + a.label);
+            for (int i = 0; i < list.size() && i < 8; i++) {
+                recoRow.addView(buildRecoCard(list.get(i)));
+            }
+        }
+    }
+
+    private View buildEnableButton() {
+        TextView b = new TextView(this);
+        b.setText("Activar recomendaciones");
+        b.setTextColor(WHITE);
+        b.setTextSize(16);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(24), 0, dp(24), 0);
+
+        GradientDrawable normal = new GradientDrawable();
+        normal.setCornerRadius(dp(40));
+        normal.setColor(0x33FFFFFF);
+        GradientDrawable focused = new GradientDrawable();
+        focused.setCornerRadius(dp(40));
+        focused.setColor(0x66FFFFFF);
+        focused.setStroke(dp(3), WHITE);
+        StateListDrawable sl = new StateListDrawable();
+        sl.addState(new int[]{android.R.attr.state_focused}, focused);
+        sl.addState(new int[]{}, normal);
+        b.setBackground(sl);
+
+        makeFocusable(b, 1.06f);
+        b.setOnClickListener(v -> openNotificationAccess());
+        b.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(52)));
+        return b;
+    }
+
+    private View buildRecoCard(final RecoService.Reco r) {
+        final FrameLayout card = new FrameLayout(this);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(12));
+        bg.setColor(0xFF1E2A4A);
+        card.setBackground(bg);
+        card.setClipToOutline(true);
+        card.setElevation(dp(2));
+
+        if (r.image != null) {
+            ImageView img = new ImageView(this);
+            img.setImageDrawable(r.image);
+            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            card.addView(img, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+
+        TextView t = new TextView(this);
+        t.setText(r.title != null ? r.title : "");
+        t.setTextColor(WHITE);
+        t.setTextSize(13);
+        t.setMaxLines(2);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        t.setPadding(dp(10), dp(22), dp(10), dp(8));
+        t.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                new int[]{0xCC000000, 0x00000000}));
+        card.addView(t, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM));
+
+        final GradientDrawable ring = new GradientDrawable();
+        ring.setCornerRadius(dp(12));
+        ring.setStroke(dp(3), WHITE);
+        card.setFocusable(true);
+        card.setOnFocusChangeListener((v, has) -> {
+            v.animate().scaleX(has ? 1.08f : 1f).scaleY(has ? 1.08f : 1f).setDuration(150).start();
+            card.setForeground(has ? ring : null);
+        });
+        card.setOnClickListener(v -> openReco(r));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(recoW, recoH);
+        lp.rightMargin = dp(18);
+        card.setLayoutParams(lp);
+        return card;
+    }
+
+    private void openReco(RecoService.Reco r) {
+        try {
+            if (r.intent != null) {
+                r.intent.send();
+            }
+        } catch (PendingIntent.CanceledException e) {
+            Toast.makeText(this, "Esta recomendación ya no está disponible", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void openNotificationAccess() {
+        try {
+            startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception e) {
+            Toast.makeText(this,
+                    "Abre Ajustes y busca \"Acceso a notificaciones\" para activar Androgena",
+                    Toast.LENGTH_LONG).show();
+            openSettings(Settings.ACTION_SETTINGS);
+        }
+    }
+
+    private void makeFocusable(View v, final float focusScale) {
+        v.setFocusable(true);
+        v.setOnFocusChangeListener((view, has) ->
+                view.animate().scaleX(has ? focusScale : 1f).scaleY(has ? focusScale : 1f)
+                        .setDuration(150).start());
     }
 
     // -------------------------------------------------------------- Apps
@@ -274,7 +482,7 @@ public class MainActivity extends Activity {
 
         final FrameLayout tile = new FrameLayout(this);
         GradientDrawable tileBg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, a.tileColors);
-        tileBg.setCornerRadius(dp(14));
+        tileBg.setCornerRadius(dp(16));
         tile.setBackground(tileBg);
         tile.setClipToOutline(true);
         tile.setElevation(dp(2));
@@ -287,26 +495,27 @@ public class MainActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         } else {
             img.setImageDrawable(a.icon);
-            tile.addView(img, new FrameLayout.LayoutParams(dp(60), dp(60), Gravity.CENTER));
+            int s = (int) (tileH * 0.52f);
+            tile.addView(img, new FrameLayout.LayoutParams(s, s, Gravity.CENTER));
         }
-        card.addView(tile, new LinearLayout.LayoutParams(dp(TILE_W), dp(TILE_H)));
+        card.addView(tile, new LinearLayout.LayoutParams(tileW, tileH));
 
         final TextView label = new TextView(this);
         label.setText(a.label);
         label.setTextColor(WHITE);
-        label.setTextSize(14);
+        label.setTextSize(16);
         label.setAlpha(0.6f);
         label.setGravity(Gravity.CENTER);
         label.setSingleLine(true);
         label.setEllipsize(TextUtils.TruncateAt.END);
         label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
-                dp(TILE_W), ViewGroup.LayoutParams.WRAP_CONTENT);
+                tileW, ViewGroup.LayoutParams.WRAP_CONTENT);
         llp.topMargin = dp(12);
         card.addView(label, llp);
 
         final GradientDrawable ring = new GradientDrawable();
-        ring.setCornerRadius(dp(14));
+        ring.setCornerRadius(dp(16));
         ring.setStroke(dp(3), WHITE);
 
         card.setFocusable(true);
@@ -315,6 +524,7 @@ public class MainActivity extends Activity {
             tile.animate().translationZ(has ? dp(16) : 0).setDuration(160).start();
             label.animate().alpha(has ? 1f : 0.6f).setDuration(160).start();
             tile.setForeground(has ? ring : null);
+            if (has) showHero(a);
         });
         card.setOnClickListener(v -> launch(a.component));
 
